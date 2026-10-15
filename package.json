@@ -1,0 +1,10 @@
+{
+  "name": "nuvio-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "engines": { "node": "20.x" },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "crypto-js": "^4.2.0"
+  }
+}
