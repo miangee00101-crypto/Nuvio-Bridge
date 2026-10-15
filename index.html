@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nuvio Bridge</title>
+<style>
+:root{--bg:#f3f1ee;--card:#fff;--ink:#1b1f2a;--mute:#6a7080;--line:#dcd8d2;--acc:#2b4acb;--acc-ink:#fff;--warn:#a05a00;--ok:#1f7a4d}
+@media (prefers-color-scheme:dark){:root{--bg:#12141b;--card:#1b1e28;--ink:#eceef5;--mute:#98a0b3;--line:#2c3140;--acc:#7f95ff;--acc-ink:#0d1020;--warn:#e0a24a;--ok:#5fd09a}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Avenir Next","Segoe UI",system-ui,sans-serif;padding:max(16px,env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom))}
+main{max-width:640px;margin:0 auto}
+h1{font:700 1.7rem/1.2 "Avenir Next","Segoe UI",system-ui,sans-serif;letter-spacing:-.02em;margin:8px 0 4px}
+p.lead{color:var(--mute);margin:0 0 20px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+h2{font-size:1rem;margin:0 0 10px}
+h2 span{color:var(--mute);font-weight:500;margin-right:6px}
+input[type=url],input[type=search]{width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--ink);font:inherit}
+input:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+button{font:inherit;border:0;border-radius:8px;padding:11px 16px;cursor:pointer;background:var(--acc);color:var(--acc-ink);font-weight:600}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:500;padding:8px 12px}
+button:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
+.msg{margin-top:10px;font-size:.92rem;color:var(--mute)}
+.msg.err{color:#c0392b}
+.prov{display:flex;gap:12px;padding:12px 0;border-top:1px solid var(--line);cursor:pointer}
+.prov:first-of-type{border-top:0}
+.prov input{width:22px;height:22px;margin-top:2px;flex:none;accent-color:var(--acc)}
+.prov b{display:block}
+.prov small{color:var(--mute);display:block}
+.tag{display:inline-block;font-size:.76rem;padding:1px 7px;border:1px solid var(--line);border-radius:99px;margin:4px 4px 0 0;color:var(--mute)}
+.tag.warn{color:var(--warn);border-color:var(--warn)}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom));display:none}
+.bar .in{max-width:640px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.out{word-break:break-all;font:.85rem/1.4 ui-monospace,Menlo,monospace;background:var(--bg);padding:10px;border-radius:8px;border:1px solid var(--line)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <h1>Nuvio Bridge</h1>
+  <p class="lead">Pick providers from any Nuvio plugin repo and get one addon link for Stremio or Nuvio.</p>
+
+  <section>
+    <h2><span>1</span>Plugin repo manifest</h2>
+    <input id="repo" type="url" inputmode="url" placeholder="https://example.com/manifest.json" autocomplete="off">
+    <div class="row"><button id="load">Load providers</button></div>
+    <div id="loadMsg" class="msg" role="status"></div>
+  </section>
+
+  <section id="pick" hidden>
+    <h2><span>2</span>Choose providers</h2>
+    <input id="q" type="search" placeholder="Filter by name, source or language">
+    <div class="row">
+      <button class="ghost" id="all">Select shown</button>
+      <button class="ghost" id="none">Clear</button>
+    </div>
+    <div id="list" style="margin-top:8px"></div>
+  </section>
+
+  <section id="done" hidden>
+    <h2><span>3</span>Your addon link</h2>
+    <div class="out" id="url"></div>
+    <div class="row">
+      <button id="copy">Copy link</button>
+      <a id="open" style="color:var(--acc)" href="#">Open in Stremio</a>
+    </div>
+    <div class="msg">In Nuvio: Settings, Content &amp; discovery, Addons, paste the link. Changes to the repo (new domains, fixes) are picked up automatically, but adding or removing providers means generating a new link.</div>
+  </section>
+</main>
+
+<div class="bar" id="bar"><div class="in"><span id="count">0 selected</span><button id="gen" disabled>Get link</button></div></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let scrapers = [], chosen = new Set(), repoUrl = '';
+try { $('repo').value = localStorage.getItem('repo') || ''; } catch (e) {}
+
+function render() {
+  const f = $('q').value.trim().toLowerCase();
+  const box = $('list'); box.textContent = '';
+  scrapers.filter(s => !f || (s.name + ' ' + s.description + ' ' + s.languages.join(' ')).toLowerCase().includes(f))
+    .forEach(s => {
+      const lab = document.createElement('label'); lab.className = 'prov'; lab.dataset.id = s.id;
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = chosen.has(s.id);
+      cb.onchange = () => { cb.checked ? chosen.add(s.id) : chosen.delete(s.id); sync(); };
+      const d = document.createElement('div');
+      const b = document.createElement('b'); b.textContent = s.name;
+      const sm = document.createElement('small'); sm.textContent = s.description;
+      d.append(b, sm);
+      s.languages.forEach(l => { const t = document.createElement('span'); t.className = 'tag'; t.textContent = l; d.append(t); });
+      if (!s.types.includes('tv') && !s.types.includes('series')) { const t = document.createElement('span'); t.className = 'tag'; t.textContent = 'movies only'; d.append(t); }
+      if (s.hasSettings) { const t = document.createElement('span'); t.className = 'tag warn'; t.textContent = 'has in-app settings (not supported here)'; d.append(t); }
+      lab.append(cb, d); box.append(lab);
+    });
+  sync();
+}
+function sync() {
+  $('count').textContent = chosen.size + ' selected';
+  $('gen').disabled = !chosen.size;
+  $('bar').style.display = scrapers.length ? 'block' : 'none';
+}
+
+$('load').onclick = async () => {
+  repoUrl = $('repo').value.trim();
+  const m = $('loadMsg'); m.className = 'msg'; m.textContent = 'Loading…';
+  try {
+    const r = await fetch('/api/providers?repo=' + encodeURIComponent(repoUrl));
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Failed');
+    scrapers = j.scrapers; chosen = new Set(); $('done').hidden = true;
+    m.textContent = j.name + ': ' + scrapers.length + ' providers found.';
+    $('pick').hidden = false; render();
+    try { localStorage.setItem('repo', repoUrl); } catch (e) {}
+  } catch (e) { m.className = 'msg err'; m.textContent = e.message; }
+};
+$('q').oninput = render;
+$('all').onclick = () => { document.querySelectorAll('#list .prov').forEach(el => chosen.add(el.dataset.id)); render(); };
+$('none').onclick = () => { chosen.clear(); render(); };
+
+$('gen').onclick = () => {
+  const cfg = JSON.stringify({ r: repoUrl, p: [...chosen] });
+  const b64 = btoa(cfg).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const url = location.origin + '/' + b64 + '/manifest.json';
+  $('url').textContent = url;
+  $('open').href = url.replace(/^https?:/, 'stremio:');
+  $('done').hidden = false;
+  $('done').scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+$('copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('url').textContent); $('copy').textContent = 'Copied'; }
+  catch (e) { $('copy').textContent = 'Select the link and copy it'; }
+  setTimeout(() => $('copy').textContent = 'Copy link', 1800);
+};
+</script>
+</body>
+</html>
