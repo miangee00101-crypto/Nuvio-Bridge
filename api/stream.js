@@ -2,6 +2,8 @@ const { cached, cors, decode, checkRepo, loadRepo, loadCode, runProvider, toStre
 
 // Return whatever has finished by this deadline instead of waiting for the slowest provider.
 const DEADLINE = Number(process.env.DEADLINE_MS || 4500);
+// If nothing has finished by the deadline, keep waiting for the first streams, up to this cap.
+const MAX_WAIT = Number(process.env.MAX_WAIT_MS || 15000);
 
 module.exports = async (req, res) => {
   cors(res);
@@ -28,7 +30,10 @@ module.exports = async (req, res) => {
 
     await new Promise((resolve) => {
       if (!pending) return resolve();
-      const timer = setTimeout(resolve, DEADLINE);
+      let deadlineHit = false;
+      const finish = () => { clearTimeout(t1); clearTimeout(t2); resolve(); };
+      const t1 = setTimeout(() => { deadlineHit = true; if (collected.length) finish(); }, DEADLINE);
+      const t2 = setTimeout(finish, MAX_WAIT);
       picked.forEach((sc) => {
         // per-provider result cache: slow providers that finish after the deadline
         // still fill the cache, so the next request returns them instantly
@@ -39,7 +44,7 @@ module.exports = async (req, res) => {
         })
           .then((v) => collected.push(...v))
           .catch(() => {})
-          .finally(() => { if (--pending === 0) { clearTimeout(timer); resolve(); } });
+          .finally(() => { if (--pending === 0 || (deadlineHit && collected.length)) finish(); });
       });
     });
 
